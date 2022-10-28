@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt::Write, string::FromUtf8Error};
+use std::{
+    collections::HashMap,
+    fmt::Write,
+    string::FromUtf8Error,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use hmac::{Hmac, Mac};
 use itertools::Itertools;
@@ -7,12 +12,32 @@ use rocket::{
     request::{FromRequest, Outcome},
     Request, State,
 };
+use serde::Deserialize;
 use sha2::Sha256;
 use urlencoding::decode;
 
 use crate::appcontext::AppContext;
 
 pub struct TelegramAuth(pub HashMap<String, String>);
+
+#[derive(Deserialize)]
+pub struct TelegramUser {
+    /// A unique identifier for the user or bot.
+    pub id: u64,
+    /// First name of the user or bot.
+    pub first_name: String,
+    /// Last name of the user or bot.
+    pub last_name: Option<String>,
+    /// Username of the user or bot.
+    pub username: Option<String>,
+    /// [IETF language](https://en.wikipedia.org/wiki/IETF_language_tag) tag of the user's language.
+    pub language_code: Option<String>,
+    /// True, if this user is a Telegram Premium user
+    pub is_premium: Option<bool>,
+    /// URL of the user’s profile photo. The photo can be in .jpeg or .svg formats.
+    /// Only returned for Web Apps launched from the attachment menu.
+    pub photo_url: Option<String>,
+}
 
 #[derive(Debug)]
 pub enum TelegramAuthError {
@@ -25,6 +50,10 @@ pub enum TelegramAuthError {
     Utf8Decode(FromUtf8Error),
     /// Calculated hash not equals telegram-provided hash
     HashMismatch,
+    /// `auth_date` is too old.
+    ///
+    /// **Note:** this variant returned only in `TelegramAuth::authorize_with_time()`
+    AuthorizationExpired,
 }
 
 impl std::fmt::Display for TelegramAuthError {
@@ -34,12 +63,16 @@ impl std::fmt::Display for TelegramAuthError {
             Self::InitDataEmpty => write!(f, "Empty (or invalid) `init_data`"),
             Self::Utf8Decode(e) => e.fmt(f),
             Self::HashMismatch => write!(f, "Hash does not match"),
+            Self::AuthorizationExpired => write!(f, "`auth_date=` field in `init_data` too old"),
         }
     }
 }
 impl std::error::Error for TelegramAuthError {}
 
 impl TelegramAuth {
+    /// Maximum time in seconds when the authorization is still valid
+    pub const MAX_AUTH_TIME: u64 = 15 * 60;
+
     /// Always returns Result::Err(TelegramAuthError::HashMismatch) using shitty magic
     // NOTE: seems like it really broken. Fuck telegram.
     pub fn authorize(init_data: &str, bot_token: &str) -> Result<Self, TelegramAuthError> {
@@ -70,13 +103,9 @@ impl TelegramAuth {
                 }
             }
 
-            (
-                hs.into_iter()
-                    .sorted_by_key(|f| f.0.as_bytes().get(0))
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect::<HashMap<String, String>>(),
-                hash,
-            )
+            hs.sort_by_key(|f| f.0);
+
+            (hs, hash)
         };
 
         // If there no hash= field, structure may be invalid (or empty...)
@@ -123,10 +152,62 @@ impl TelegramAuth {
         };
 
         if calculated_hash == telegram_hash {
-            Ok(TelegramAuth(data_fields))
+            Ok(TelegramAuth(
+                data_fields
+                    .into_iter()
+                    .map(|f| (f.0.to_owned(), f.1))
+                    .collect(),
+            ))
         } else {
             Err(TelegramAuthError::HashMismatch)
         }
+    }
+
+    /// Verify `init_data` by `bot_token` and verify `auth_date=` field in `init_data`
+    pub fn authorize_with_time(
+        init_data: &str,
+        bot_token: &str,
+        allowed_auth_time: u64,
+    ) -> Result<Self, TelegramAuthError> {
+        let data_fields = Self::authorize(init_data, bot_token)?;
+
+        if data_fields.validate_by_time(allowed_auth_time) {
+            Ok(data_fields)
+        } else {
+            Err(TelegramAuthError::AuthorizationExpired)
+        }
+    }
+
+    /// Validate authorization by time
+    pub fn validate_by_time(&self, allowed_auth_time: u64) -> bool {
+        let auth_time = self
+            .0
+            .get("auth_date")
+            .map(|f| f.parse::<u64>().ok())
+            .flatten();
+        debug_assert!(auth_time.is_some());
+
+        let auth_time = match auth_time {
+            Some(a) => a,
+            None => return false,
+        };
+
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Duration since UNIX_EPOCH")
+            .as_secs();
+
+        auth_time + allowed_auth_time >= current_time
+    }
+
+    /// Get user from data fields
+    pub fn get_user(&self) -> Result<TelegramUser, serde_json::Error> {
+        let user = self
+            .0
+            .get("user")
+            .expect("`data_fields` doesn't contains `user=` field");
+
+        serde_json::from_str(&user)
     }
 }
 
@@ -146,7 +227,11 @@ impl<'r> FromRequest<'r> for TelegramAuth {
             None => return Outcome::Forward(()),
         };
 
-        let telegram_auth = TelegramAuth::authorize(init_data, &app_context.telegram_token);
+        let telegram_auth = TelegramAuth::authorize_with_time(
+            init_data,
+            &app_context.telegram_token,
+            TelegramAuth::MAX_AUTH_TIME,
+        );
 
         match telegram_auth {
             Ok(a) => Outcome::Success(a),
