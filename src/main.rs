@@ -4,10 +4,13 @@ mod routes;
 mod telegramauth;
 
 use appcontext::AppContext;
-use rocket::{config::Ident, Config};
+use rocket::{catchers, config::Ident, Config};
 
 use migration::{sea_orm::Database, Migrator, MigratorTrait};
-use routes::get_routes;
+use routes::{
+    catchers::{default_catcher, no_endpoint_catcher},
+    get_routes,
+};
 
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .mount("/", get_routes())
+        .register("/", catchers![default_catcher, no_endpoint_catcher])
         .manage(db)
         .manage(ctx)
         .launch()
