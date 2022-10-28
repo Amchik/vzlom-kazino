@@ -1,4 +1,4 @@
-use std::{collections::HashMap, string::FromUtf8Error};
+use std::{collections::HashMap, fmt::Write, string::FromUtf8Error};
 
 use hmac::{Hmac, Mac};
 use itertools::Itertools;
@@ -72,7 +72,7 @@ impl TelegramAuth {
 
             (
                 hs.into_iter()
-                    .sorted_by_key(|f| f.0)
+                    .sorted_by_key(|f| f.0.as_bytes().get(0))
                     .map(|(k, v)| (k.to_string(), v))
                     .collect::<HashMap<String, String>>(),
                 hash,
@@ -92,7 +92,8 @@ impl TelegramAuth {
             .join("\n");
 
         let secret_key = {
-            let mut mac = Hmac::<Sha256>::new_from_slice(b"WebApp").expect("Init 'WebApp' mac");
+            let mut mac =
+                Hmac::<Sha256>::new_from_slice(b"WebAppData").expect("Init 'WebAppData' mac");
             mac.update(bot_token.as_bytes());
 
             mac.finalize().into_bytes()
@@ -109,7 +110,19 @@ impl TelegramAuth {
             mac.finalize().into_bytes()
         };
 
-        if &calculated_hash[..] == telegram_hash.as_bytes() {
+        // Encode `calculated_hash` bytes to hex string, like `telegram_hash`
+        let calculated_hash = {
+            let bytes = &calculated_hash[..];
+            let mut s = String::with_capacity(bytes.len() * 2);
+
+            for &b in bytes {
+                write!(&mut s, "{:02x}", b).unwrap();
+            }
+
+            s
+        };
+
+        if calculated_hash == telegram_hash {
             Ok(TelegramAuth(data_fields))
         } else {
             Err(TelegramAuthError::HashMismatch)
