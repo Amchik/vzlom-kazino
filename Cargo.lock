@@ -2773,7 +2773,6 @@ dependencies = [
  "entity",
  "hmac",
  "itertools",
- "lazy_static",
  "migration",
  "rocket",
  "sea-orm 0.9.3",

@@ -21,7 +21,6 @@ urlencoding = "2.1"
 itertools = "0.10"
 hmac = "0.12"
 sha2 = "0.10"
-lazy_static = "1.4"
 
 migration = { path = "migration" }
 entity = { path = "entity" }

@@ -1,8 +1,8 @@
-use lazy_static::__Deref;
 use migration::sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ActiveValue, DatabaseConnection, EntityTrait,
 };
 use rocket::{get, State};
+use std::ops::Deref;
 
 use crate::{response::APIResponse, telegramauth::TelegramAuth};
 

@@ -18,6 +18,7 @@ use urlencoding::decode;
 
 use crate::appcontext::AppContext;
 
+#[derive(Debug)]
 pub struct TelegramAuth(pub HashMap<String, String>);
 
 #[derive(Deserialize)]
@@ -39,7 +40,7 @@ pub struct TelegramUser {
     pub photo_url: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum TelegramAuthError {
     /// Invalid `init_data` key=value format.
     /// For example, may occur on `init_data` like `foo=bar&invalid&bar=baz`
@@ -237,5 +238,81 @@ impl<'r> FromRequest<'r> for TelegramAuth {
             Ok(a) => Outcome::Success(a),
             Err(e) => Outcome::Failure((Status::Forbidden, e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TelegramAuth, TelegramAuthError};
+
+    #[test]
+    /// Check [`TelegramAuth::authorize`]  (without time check)
+    fn test_authorize() {
+        // Real (but revoked) bot token and init_data
+        let bot_token = "5771507903:AAHYxg2LdN031SsY0urp0FFgiWPk4Jq4v_g";
+        let init_data = "query_id=AAEmQYAUAAAAACZBgBSRrcZj&user=%7B%22id%22%3A343949606%2C%22first_name%22%3A%22ceheki%21%20%F0%9F%8C%BF%22%2C%22last_name%22%3A%22%CE%B6%22%2C%22username%22%3A%22ceheki%22%2C%22language_code%22%3A%22en%22%2C%22is_premium%22%3Atrue%7D&auth_date=1666961519&hash=d27168e5a02e8639308d526b060dd28cdc668e6c48a897bbd1c7e1b6df3022c2";
+
+        let result = TelegramAuth::authorize(init_data, bot_token).unwrap();
+
+        assert_eq!(
+            result.0.get("query_id"),
+            Some(&"AAEmQYAUAAAAACZBgBSRrcZj".to_owned())
+        );
+        assert_eq!(result.0.get("auth_date"), Some(&"1666961519".to_owned()));
+        assert_eq!(result.0.get("hash"), None);
+    }
+
+    #[test]
+    /// Check [`TelegramAuth::authorize`] with invalid data format
+    fn test_authorize_invalid_format() {
+        let init_data = "hash=foobarbaz&INVALID&yeees=12345";
+
+        let result = TelegramAuth::authorize(init_data, "--not-used").unwrap_err();
+
+        assert_eq!(result, TelegramAuthError::InitDataFormat);
+    }
+
+    #[test]
+    /// Check [`TelegramAuth::authorize`] with empty data
+    fn test_authorize_data_empty() {
+        let init_data = "";
+
+        let result = TelegramAuth::authorize(init_data, "--not-used").unwrap_err();
+
+        assert_eq!(result, TelegramAuthError::InitDataFormat);
+    }
+
+    #[test]
+    /// Check [`TelegramAuth::authorize`] with data without hash
+    fn test_authorize_data_no_hash() {
+        let init_data = "stilly=normal&data=butnohash";
+
+        let result = TelegramAuth::authorize(init_data, "--not-used").unwrap_err();
+
+        assert_eq!(result, TelegramAuthError::InitDataEmpty);
+    }
+
+    #[test]
+    /// Check [`TelegramAuth::authorize`] with invalid hash
+    fn test_authorize_invalid_hash() {
+        let bot_data = "5771507903:AAHYxg2LdN031SsY0urp0FFgiWPk4Jq4v_g";
+        let init_data = "query_id=AAEmQYAUAAAAACZBgBQMkN2a&user=%7B%22id%22%3A343949606%2C%22first_name%22%3A%22ceheki%21%20%F0%9F%8C%BF%22%2C%22last_name%22%3A%22%CE%B6%22%2C%22username%22%3A%22ceheki%22%2C%22language_code%22%3A%22en%22%2C%22is_premium%22%3Atrue%7D&auth_date=1666953069&hash=360df48b0006b02b2f5d8526c2a16dbd521ab59c7bad1b480738c45fbd9e3b8e";
+
+        let result = TelegramAuth::authorize(init_data, bot_data).unwrap_err();
+
+        assert_eq!(result, TelegramAuthError::HashMismatch);
+    }
+
+    #[test]
+    /// Check [`TelegramAuth::authorize_with_time`]
+    fn test_authorize_with_time() {
+        let bot_token = "5771507903:AAHYxg2LdN031SsY0urp0FFgiWPk4Jq4v_g";
+        let init_data = "query_id=AAEmQYAUAAAAACZBgBT6fMXb&user=%7B%22id%22%3A343949606%2C%22first_name%22%3A%22ceheki%21%20%F0%9F%8C%BF%22%2C%22last_name%22%3A%22%CE%B6%22%2C%22username%22%3A%22ceheki%22%2C%22language_code%22%3A%22en%22%2C%22is_premium%22%3Atrue%7D&auth_date=1666946118&hash=95b450d68547f74f61d8863d03de61b3f9c528da494631715d6ee52c20561076";
+
+        let result =
+            TelegramAuth::authorize_with_time(init_data, bot_token, TelegramAuth::MAX_AUTH_TIME)
+                .unwrap_err();
+
+        assert_eq!(result, TelegramAuthError::AuthorizationExpired);
     }
 }
