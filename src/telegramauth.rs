@@ -40,7 +40,7 @@ pub struct TelegramUser {
     pub photo_url: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TelegramAuthError {
     /// Invalid `init_data` key=value format.
     /// For example, may occur on `init_data` like `foo=bar&invalid&bar=baz`
@@ -181,11 +181,7 @@ impl TelegramAuth {
 
     /// Validate authorization by time
     pub fn validate_by_time(&self, allowed_auth_time: u64) -> bool {
-        let auth_time = self
-            .0
-            .get("auth_date")
-            .map(|f| f.parse::<u64>().ok())
-            .flatten();
+        let auth_time = self.0.get("auth_date").and_then(|f| f.parse::<u64>().ok());
         debug_assert!(auth_time.is_some());
 
         let auth_time = match auth_time {
@@ -208,7 +204,7 @@ impl TelegramAuth {
             .get("user")
             .expect("`data_fields` doesn't contains `user=` field");
 
-        serde_json::from_str(&user)
+        serde_json::from_str(user)
     }
 }
 

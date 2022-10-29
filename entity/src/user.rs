@@ -25,7 +25,7 @@ pub struct Model {
     pub casino_type: Option<CasinoType>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Copy, Clone, EnumIter, DeriveActiveEnum)]
+#[derive(Debug, Serialize, PartialEq, Eq, Copy, Clone, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "i32", db_type = "Integer")]
 #[serde(rename_all = "camelCase")]
 pub enum CasinoType {
